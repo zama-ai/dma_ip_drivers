@@ -1,0 +1,5 @@
+# this file must be copied once into /etc/udev/rules.d/
+# then you need to do :
+# udevadm control --reload-rules && udevadm trigger
+
+SUBSYSTEM=="qdma*", MODE:="0666"
