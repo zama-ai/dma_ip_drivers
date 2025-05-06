@@ -34,12 +34,14 @@
 #define DRV_MOD_MAJOR		2024
 #define DRV_MOD_MINOR		1
 #define DRV_MOD_PATCHLEVEL	0
+#define DRV_MOD_ZAMA_TAG	zama
 
 #define DRV_MODULE_VERSION      \
 	__stringify(DRV_MOD_MAJOR) "." \
 	__stringify(DRV_MOD_MINOR) "." \
 	__stringify(DRV_MOD_PATCHLEVEL) "." \
-	__stringify(LIBQDMA_VERSION_PATCH) "." \
+	__stringify(LIBQDMA_VERSION_PATCH) "-" \
+	__stringify(DRV_MOD_ZAMA_TAG)
 
 #define DRV_MOD_VERSION_NUMBER  \
 	((DRV_MOD_MAJOR)*10000 + (DRV_MOD_MINOR)*1000 + DRV_MOD_PATCHLEVEL)
