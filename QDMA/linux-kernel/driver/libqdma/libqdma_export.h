@@ -558,7 +558,7 @@ struct qdma_sw_sg {
 	struct page *pg;
 	/** offset in current page */
 	unsigned int offset;
-	/** length of the page */
+	/** length of the entry in bytes */
 	unsigned int len;
 	/** dma address of the allocated page */
 	dma_addr_t dma_addr;

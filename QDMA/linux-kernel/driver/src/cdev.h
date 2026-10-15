@@ -105,6 +105,8 @@ struct qdma_io_cb {
 	size_t len;
 	/** page number */
 	unsigned int pages_nr;
+	/** scatter gather number */
+	unsigned int sg_nr;
 	/** scatter gather list */
 	struct qdma_sw_sg *sgl;
 	/** pages allocated to accommodate the scatter gather list */

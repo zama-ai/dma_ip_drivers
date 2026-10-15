@@ -30,6 +30,8 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
+#include <linux/mm.h>
+#include <linux/moduleparam.h>
 #include <linux/slab.h>
 #include <linux/aio.h>
 #include <linux/sched.h>
@@ -42,6 +44,28 @@
 
 #include "qdma_mod.h"
 #include "libqdma/xdev.h"
+
+/*
+ * Merge physically contiguous user pages into one scatter-gather entry.
+ */
+static bool sgl_merge = true;
+module_param(sgl_merge, bool, 0644);
+MODULE_PARM_DESC(sgl_merge,
+	"merge physically contiguous user pages into one sg entry (default 1)");
+
+/*
+ * Longest run of pages merged into one sg entry: what one MM descriptor can
+ * carry, rounded down to a page.
+ * Keeps sg->len well below UINT_MAX & bounds the size of a single dma_map_page().
+ */
+#define SGL_MERGE_MAX_LEN	(QDMA_DESC_BLEN_MAX & PAGE_MASK)
+
+/* true when merging is enabled and pg is the physical page right after prev */
+static inline bool sgl_can_merge(struct page *prev, struct page *pg)
+{
+	return sgl_merge && !PageHighMem(pg) &&
+	       page_to_pfn(pg) == page_to_pfn(prev) + 1;
+}
 
 /*
  * @struct - xlnx_phy_dev
@@ -275,6 +299,7 @@ static int map_user_buf_to_sgl(struct qdma_io_cb *iocb, bool write)
 	struct qdma_sw_sg *sg;
 	unsigned int pg_off = offset_in_page(buf);
 	unsigned int pages_nr = (len + pg_off + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	unsigned int sg_nr;
 	int i;
 	int rv;
 
@@ -284,6 +309,7 @@ static int map_user_buf_to_sgl(struct qdma_io_cb *iocb, bool write)
 		return -EINVAL;
 
 	iocb->pages_nr = 0;
+	iocb->sg_nr = 0;
 	sg = kmalloc(pages_nr * (sizeof(struct qdma_sw_sg) +
 			sizeof(struct page *)), GFP_KERNEL);
 	if (!sg) {
@@ -323,7 +349,8 @@ static int map_user_buf_to_sgl(struct qdma_io_cb *iocb, bool write)
 	}
 
 	sg = iocb->sgl;
-	for (i = 0; i < pages_nr; i++, sg++) {
+	sg_nr = 0;
+	for (i = 0; i < pages_nr; i++) {
 		unsigned int offset = offset_in_page(buf);
 		unsigned int nbytes = min_t(unsigned int, PAGE_SIZE - offset,
 						len);
@@ -331,17 +358,28 @@ static int map_user_buf_to_sgl(struct qdma_io_cb *iocb, bool write)
 
 		flush_dcache_page(pg);
 
-		sg->next = sg + 1;
-		sg->pg = pg;
-		sg->offset = offset;
-		sg->len = nbytes;
-		sg->dma_addr = 0UL;
+		/* extend the current entry, or start a new one.
+		 * dma_addr and next are already zero from the memset above.
+		 */
+		if (sg_nr && sgl_can_merge(iocb->pages[i - 1], pg) &&
+		    sg[sg_nr - 1].len + nbytes <= SGL_MERGE_MAX_LEN) {
+			sg[sg_nr - 1].len += nbytes;
+		} else {
+			sg[sg_nr].pg = pg;
+			sg[sg_nr].offset = offset;
+			sg[sg_nr].len = nbytes;
+			sg_nr++;
+		}
 
 		buf += nbytes;
 		len -= nbytes;
 	}
 
-	iocb->sgl[pages_nr - 1].next = NULL;
+	/* entries are consecutive in the array: link them now */
+	for (i = 0; i + 1 < sg_nr; i++)
+		sg[i].next = &sg[i + 1];
+
+	iocb->sg_nr = sg_nr;
 	iocb->pages_nr = pages_nr;
 	return 0;
 
@@ -387,7 +425,7 @@ static ssize_t cdev_gen_read_write(struct file *file, char __user *buf,
 	if (rv < 0)
 		return rv;
 
-	req->sgcnt = iocb.pages_nr;
+	req->sgcnt = iocb.sg_nr;
 	req->sgl = iocb.sgl;
 	req->write = write ? 1 : 0;
 	req->dma_mapped = 0;
@@ -463,7 +501,7 @@ static ssize_t cdev_aio_write(struct kiocb *iocb, const struct iovec *io,
 			break;
 
 		caio->reqv[i]->write = 1;
-		caio->reqv[i]->sgcnt = caio->qiocb[i].pages_nr;
+		caio->reqv[i]->sgcnt = caio->qiocb[i].sg_nr;
 		caio->reqv[i]->sgl = caio->qiocb[i].sgl;
 		caio->reqv[i]->dma_mapped = false;
 		caio->reqv[i]->udd_len = 0;
@@ -538,7 +576,7 @@ static ssize_t cdev_aio_read(struct kiocb *iocb, const struct iovec *io,
 			break;
 
 		caio->reqv[i]->write = 0;
-		caio->reqv[i]->sgcnt = caio->qiocb[i].pages_nr;
+		caio->reqv[i]->sgcnt = caio->qiocb[i].sg_nr;
 		caio->reqv[i]->sgl = caio->qiocb[i].sgl;
 		caio->reqv[i]->dma_mapped = false;
 		caio->reqv[i]->udd_len = 0;
