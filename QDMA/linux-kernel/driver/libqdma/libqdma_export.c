@@ -2302,6 +2302,24 @@ int qdma_vf_qconf(unsigned long dev_hndl, int qmax)
 
 /*****************************************************************************/
 /**
+ * sgl_map_size() returns the byte size of one sg (scatter gather) entry
+ *
+ * From the first page start to the end of its last one.
+ * An entry is one page, or several physically contiguous pages merged by the
+ * character device. A zero-length entry maps one page, as before.
+ *
+ * @param[in]   sg:     sg entry
+ *
+ * @return      size in bytes, PAGE_SIZE at least
+ *****************************************************************************/
+static inline size_t sgl_map_size(const struct qdma_sw_sg *sg)
+{
+	size_t size = PAGE_ALIGN((size_t)sg->offset + sg->len);
+	return size ? size : PAGE_SIZE;
+}
+
+/*****************************************************************************/
+/**
  * sgl_unmap() - unmap the sg list from host pages
  *
  * @param[in]	pdev:	pointer to struct pci_dev
@@ -2325,7 +2343,7 @@ void sgl_unmap(struct pci_dev *pdev, struct qdma_sw_sg *sg, unsigned int sgcnt,
 			break;
 		if (sg->dma_addr) {
 			dma_unmap_page(&pdev->dev, sg->dma_addr - sg->offset,
-							PAGE_SIZE, dir);
+					sgl_map_size(sg), dir);
 			sg->dma_addr = 0UL;
 		}
 	}
@@ -2351,13 +2369,13 @@ int sgl_map(struct pci_dev *pdev, struct qdma_sw_sg *sgl, unsigned int sgcnt,
 	int i;
 	struct qdma_sw_sg *sg = sgl;
 
-	/** Map the sg list onto a dma pages where
-	 *  each page has max of PAGE_SIZE i.e 4K
+	/** Map each entry from the start of its first page over the whole run
+	 *  it covers: one page, or several physically contiguous pages merged
+	 *  by the character device (hugetlb / THP user buffers)
 	 */
 	for (i = 0; i < sgcnt; i++, sg++) {
-		/* !! TODO  page size !! */
-		sg->dma_addr = dma_map_page(&pdev->dev, sg->pg, 0, PAGE_SIZE,
-				dir);
+		sg->dma_addr = dma_map_page(&pdev->dev, sg->pg, 0,
+				sgl_map_size(sg), dir);
 		if (unlikely(dma_mapping_error(&pdev->dev, sg->dma_addr))) {
 			pr_err("map sgl failed, sg %d, %u.\n", i, sg->len);
 			if (i)
