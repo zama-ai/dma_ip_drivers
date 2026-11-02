@@ -33,7 +33,7 @@
 
 #define DRV_MOD_MAJOR		2024
 #define DRV_MOD_MINOR		1
-#define DRV_MOD_PATCHLEVEL	0
+#define DRV_MOD_PATCHLEVEL	1
 #define DRV_MOD_ZAMA_TAG	zama
 
 #define DRV_MODULE_VERSION      \
